@@ -1,0 +1,47 @@
+# dynamic occupancy model loosely modeled for giant kelp
+
+model{
+    for(i in 1:nSites) {
+        # biological process
+        psi[i,1] <- psiInt[i]*exp(-0.5*((sst[i,1]-Topt1)/width1)^2) # first-year occupancy equation
+        z[i, 1] ~ dbern(psi[i,1]) # first-year occupancy state
+    
+        for(t in 2:nYears) { # for each subsequent year
+            phi[i, t-1] <- phiInt[i,t-1]*exp(-0.5*((sst[i,t-1]-Topt2)/width2)^2) # persistence probability
+            gamma[i, t-1] <- gamInt[i,t-1]*exp(-0.5*((sst[i,t-1]-Topt3)/width3)^2) # colonization probability
+            psi[i,t] <- z[i, t-1]*phi[i,t-1] + (1 - z[i, t-1])*gamma[i,t-1] # occupancy probability
+            z[i, t] ~ dbern(psi[i,t]) # occupancy state
+        }
+   
+        # detection process
+        for(t in 1:nYears) {
+            y[i, t] ~ dbin(p[t] * z[i, t], n[i, t]) # observation state with time-dependent observation probabilities
+            log.lik[i,t]  <- logdensity.bin(y[i,t],p[t],n[i,t]) # for lppd. 
+        }
+    }
+
+    # Priors
+    for(i in 1:nSites) {
+        psiInt[i] ~ dbeta(1,1) # initial occupancy
+        for(t in 1:(nYears-1)){
+            phiInt[i,t] ~ dbeta(1,1)
+            gamInt[i,t] ~ dbeta(1,1)
+        }
+    }
+    
+    Topt1 ~ dnorm(8,16)
+    width1 ~ dnorm(5,10)
+    Topt2 ~ dnorm(8,16)
+    width2 ~ dnorm(5,10)
+    Topt3 ~ dnorm(8,16)
+    width3 ~ dnorm(5,10)
+    
+    for(t in 1:nYears) {
+        p[t] ~ dbeta(1, 1)
+    }
+    
+    # Derived variable
+    for(t in 1:nYears) {
+        N[t] <- sum(z[,t]) # no. sites occupied for each year
+    }
+}

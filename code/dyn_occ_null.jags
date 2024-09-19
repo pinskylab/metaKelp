@@ -1,0 +1,36 @@
+# dynamic occupancy model loosely modeled for giant kelp
+
+model{
+    for(i in 1:nSites) {
+        # biological process
+        z[i, 1] ~ dbern(psi1[i]) # occupancy state
+    
+        for(t in 2:nYears) { # for each subsequent year
+            psi[i,t] <- z[i, t-1]*phi[i,t-1] + (1 - z[i, t-1])*gamma[i,t-1] # occupancy probability
+            z[i, t] ~ dbern(psi[i,t]) # occupancy state
+        }
+   
+        # detection process
+        for(t in 1:nYears) {
+            y[i, t] ~ dbin(p[t] * z[i, t], n[i, t]) # observation state with time-dependent observation probabilities
+            log.lik[i,t]  <- logdensity.bin(y[i,t],p[t],n[i,t]) # for lppd. 
+        }
+    }
+
+    # Priors
+    for(i in 1:nSites) {
+        psi1[i] ~ dbeta(1,1) # initial occupancy
+        for(t in 1:(nYears-1)){
+            phi[i,t] ~ dbeta(1,1) # persistence
+            gamma[i,t] ~ dbeta(1,1) # colonization
+        }
+    }
+    for(t in 1:nYears) {
+        p[t] ~ dbeta(1, 1)
+    }
+    
+    # Derived variable
+    for(t in 1:nYears) {
+        N[t] <- sum(z[,t]) # no. sites occupied for each year
+    }
+}

@@ -21,8 +21,8 @@ model{
    
         # detection process
         for(t in 1:nYears) {
-            y[i, t] ~ dbin(p * z[i, t], n[i, t]) # observation state with time-dependent observation probabilities
-            log.lik[i,t]  <- logdensity.bin(y[i,t],p,n[i,t]) # for lppd. 
+            y[i, t] ~ dbin(p[t] * z[i, t], n[i, t]) # observation state with time-dependent observation probabilities
+            log.lik[i,t]  <- logdensity.bin(y[i,t],p[t],n[i,t]) # for lppd. 
         }
     }
 
@@ -34,8 +34,10 @@ model{
     gamInt ~ dbeta(1, 1)
     lgamInt <- logit(gamInt)
 
-    p ~ dbeta(1, 1)
-
+    for(t in 1:nYears) {
+        p[t] ~ dbeta(1, 1)
+    }
+    
     Topt1 ~ dnorm(8,16)
     width1 ~ dnorm(5,10)
     Topt2 ~ dnorm(8,16)

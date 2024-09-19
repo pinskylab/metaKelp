@@ -1,7 +1,10 @@
 ---
 title: "Investigate metapopulation dynamics in kelp"
 output: 
-    github_document: default
+    github_document:
+        toc: true
+        toc_depth: 3
+
 
 ---
 Builds from Miriam Wanner's data processing code in https://github.com/miriamwanner/kelpsynchrony/blob/0.2.1/Code/init_data_processing.R
@@ -25,7 +28,7 @@ survival_rate <- 0.1 # this can be changed to recreate MRM results with differen
 ```
 
 Read in and aggregate biomass, wave, and sst data to match ROMS patches. Read in from a file if available, since otherwise slow.
-```{r aggregate}
+```{r aggregate, echo=FALSE}
 # skip the calculations if we already have the files
 if(file.exists(here('temp', 'kelpDataROMSSites.csv')) & file.exists(here('temp', 'oceanAvgKelpSites.csv')) & file.exists(here('temp', 'oceanAnnKelpSites.rds')) & file.exists(here('temp', 'wavesROMSSites.csv')) & file.exists(here('temp', 'sstROMSSites.csv'))){
     kelpDataROMSSites <- as.matrix(read.csv(here('temp', 'kelpDataROMSSites.csv'), row.names = 1)) # kelp biomass data by site by time step
@@ -217,7 +220,7 @@ if(file.exists(here('temp', 'kelpDataROMSSites.csv')) & file.exists(here('temp',
 ```
 
 Calculate fecundity and dispersal probability. Uses the survival rate set in the first code block.
-```{r fecundity and dispersal}
+```{r fecundity and dispersal, echo=FALSE}
 # FECUNDITY AND PROBABILITY MATRIX variables:
 # kelpFecundity = calculation of kelp fecundity - each cell is one site and year
 # probMat = each cell is (0.1)^(days in connectivity matrix), diagonal is zero
@@ -252,6 +255,7 @@ colnames(connbySitebyYear) <- tsname
 
 Reshape the data into long format and plot.
 ```{r}
+# plot biomass
 kelpDataROMSSiteslong <- melt(kelpDataROMSSites, varnames = c('site', 'time'), value.name = 'biomass')
 kelpDataROMSSiteslong$time <- gsub('X', '', as.character(kelpDataROMSSiteslong$time))
 ggplot(kelpDataROMSSiteslong, aes(x = time, y = site, fill = sqrt(biomass))) +
@@ -259,18 +263,29 @@ ggplot(kelpDataROMSSiteslong, aes(x = time, y = site, fill = sqrt(biomass))) +
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 6)) +
     coord_cartesian(ylim = c(0, 117), expand = FALSE)
 
+# plot occupancy
+kelpDataROMSSiteslong <- melt(kelpDataROMSSites, varnames = c('site', 'time'), value.name = 'biomass')
+kelpDataROMSSiteslong$time <- gsub('X', '', as.character(kelpDataROMSSiteslong$time))
+ggplot(kelpDataROMSSiteslong, aes(x = time, y = site, fill = I(biomass>0)*1+1)) +
+    geom_raster() + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 6)) +
+    coord_cartesian(ylim = c(0, 117), expand = FALSE)
+
+# plot SST
 sstROMSSiteslong <- melt(sstROMSSites, varnames = c('site', 'time'), value.name = 'sst')
 sstROMSSiteslong$time <- gsub('X', '', as.character(sstROMSSiteslong$time))
 ggplot(sstROMSSiteslong, aes(x = time, y = sst, group = site)) +
     geom_line(color = '#00000033') + 
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 6)) 
 
+# plot waves
 wavesROMSSiteslong <- melt(wavesROMSSites, varnames = c('site', 'time'), value.name = 'hs')
 wavesROMSSiteslong$time <- gsub('X', '', as.character(wavesROMSSiteslong$time))
 ggplot(wavesROMSSiteslong, aes(x = time, y = hs, group = site)) +
     geom_line(color = '#00000033') + 
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 6))
 
+# plot connectivity
 connbySitebyYearlong <- melt(connbySitebyYear, varnames = c('site', 'time'), value.name = 'connectivity')
 connbySitebyYearlong$time <- as.character(wavesROMSSiteslong$time)
 ggplot(connbySitebyYearlong, aes(x = time, y = connectivity, group = site)) +
@@ -339,7 +354,7 @@ names(maxbio) <- c('site', 'maxbio')
 maxbio$maxbio.log <- log(maxbio$maxbio)
 kelpstats <- merge(kelpstats, maxbio)
 
-# add sst
+# add sst. trim out years without data.
 sstROMSSiteslong$year <- as.numeric(sapply(strsplit(sstROMSSiteslong$time, split='\\.', ), `[`, 1))
 sstROMSSiteslong$quarter <- as.numeric(sapply(strsplit(sstROMSSiteslong$time, split='\\.', ), `[`, 2))
 sstROMSSiteslong$sem <- ifelse(sstROMSSiteslong$quarter < 3, 1, 2)
@@ -368,7 +383,7 @@ kelpstats$prevocc.f <- as.factor(kelpstats$prevocc)
 kelpstats$hs.log <- log(kelpstats$hs+1)
 ```
 
-Basic model. Ignore patch area for now
+Basic model. Use maxbio instead of patch area for now
 ```{r stats}
 mod <- glmmTMB(occ ~ connectivity.log + prevocc.f + maxbio.log + (1|year/sem) + (1|site), data = kelpstats, family = binomial(link = 'logit'))
 
@@ -411,27 +426,27 @@ plot(toplot5)
 # Dynamic occupancy model
 Read in from file if temp/dyn_occ.rds exists
 ```{r dynocc}
-if(file.exists(here('temp', 'dyn_occ.rds'))){
-    dyn_occ <- readRDS(here('temp', 'dyn_occ.rds'))
+#model <- 'dyn_occ_null'
+model <- 'dyn_occ_temp'
 
-    # Standardize covariates
-    sstS <- wiqid::standardize(sstROMSSites)
-    hsS <- wiqid::standardize(wavesROMSSites)
-    maxbio.logS <- wiqid::standardize(matrix(maxbio$maxbio.log, nrow=nrow(sstS), ncol=ncol(sstS), byrow=FALSE))
-    
+# Standardize covariates
+ytokeep <- 6:152 # trim to years with sst
+sstS <- wiqid::standardize(sstROMSSites[,ytokeep])
+hsS <- wiqid::standardize(wavesROMSSites[,ytokeep])
+maxbio.logS <- wiqid::standardize(matrix(maxbio$maxbio.log, nrow=nrow(sstS), ncol=ncol(sstS), byrow=FALSE))
+
+if(file.exists(here('temp', paste0(model, '.rds')))){
+    dyn_occ <- readRDS(here('temp', paste0(model, '.rds')))
+    print('read jags fit from file')
+
 } else {
     
-    z <- (kelpDataROMSSites > 0)*1 # matrix of occupied (1) or not (NA). rows are sites, cols are time.
+    z <- (kelpDataROMSSites[,ytokeep] > 0)*1 # matrix of occupied (1) or not (NA). rows are sites, cols are time.
     z[z == 0] <- NA
     
-    # Standardize covariates
-    sstS <- wiqid::standardize(sstROMSSites)
-    hsS <- wiqid::standardize(wavesROMSSites)
-    maxbio.logS <- wiqid::standardize(matrix(maxbio$maxbio.log, nrow=nrow(sstS), ncol=ncol(sstS), byrow=FALSE))
-    
-    jdata <- list(nSites = nrow(z), nYears = ncol(z), y =(kelpDataROMSSites>0)*1,
+    jdata <- list(nSites = nrow(z), nYears = ncol(z), y =(kelpDataROMSSites[,ytokeep]>0)*1,
                   z = z,  
-                  n = kelpDataROMSSites, # use biomass for abundance proxy
+                  n = (kelpDataROMSSites[,ytokeep]>0)*100, # use 100 for abundance proxy. detection is ~1/this
                   sst = sstS, 
                   hs = hsS,
                   maxbio = maxbio.logS)
@@ -439,16 +454,16 @@ if(file.exists(here('temp', 'dyn_occ.rds'))){
     wanted <- c("Topt1", "width1", "Topt2", "width2", "Topt3", "width3", 
                 "betapsi_maxbio", "betaphi_maxbio", "betagam_maxbio",
                 "betapsi_hs", "betaphi_hs", 
-                "N", "gamma", "phi", "psi",
+                "N", "gamma", "phi", "psi", "psi1",
                 "psiInt", "phiInt", "gamInt", "p",
                 "log.lik")
     
     dyn_occ <- jagsUI::jags(data = jdata, inits = NULL, parameters.to.save = wanted, 
-                            model.file = here('code', "dyn_occ.jags"),
+                            model.file = here('code', paste0(model, '.jags')),
                             n.thin = 50,
                             n.chains=2, n.iter=10000, DIC=TRUE, parallel=TRUE, verbose=TRUE)
     
-    saveRDS(dyn_occ, here('temp', 'dyn_occ.rds'))
+    saveRDS(dyn_occ, here('temp', paste0(model, '.rds')))
 }
 ```
 
@@ -460,13 +475,11 @@ library(loo)
 
 jagsUI::traceplot(dyn_occ, parameters = c("Topt1", "width1", "Topt2", "width2", "Topt3", "width3", 
             "betapsi_maxbio", "betaphi_maxbio", "betagam_maxbio",
-            "betapsi_hs", "betaphi_hs", 
-            "psiInt", "phiInt", "gamInt", "p"))
+            "betapsi_hs", "betaphi_hs"))
 
 jagsUI::densityplot(dyn_occ, parameters = c("Topt1", "width1", "Topt2", "width2", "Topt3", "width3", 
             "betapsi_maxbio", "betaphi_maxbio", "betagam_maxbio",
-            "betapsi_hs", "betaphi_hs", 
-            "psiInt", "phiInt", "gamInt", "p"))
+            "betapsi_hs", "betaphi_hs"))
 
 # WAIC and LOO
 # loglik <- dyn_occ$sims.list$log.lik
@@ -479,14 +492,14 @@ jagsUI::densityplot(dyn_occ, parameters = c("Topt1", "width1", "Topt2", "width2"
 
 Plot environmental functions
 ```{r dynocc environmental plots}
-# Temperature
+# Temperature. Average over spatial and temporal variation in intercepts
 Tresponses <- data.table(sstS = seq(from = min(sstS), to = max(sstS), length.out = 100))
-Tresponses[, sst := sstS*sd(sstROMSSites) + mean(sstROMSSites)]
-Tresponses[, phi := dyn_occ$mean$phiInt*exp(-0.5*((sstS-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)]
-Tresponses[, gamma := dyn_occ$mean$gamInt*exp(-0.5*((sstS-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)]
-Tresponses[, psi := dyn_occ$mean$psiInt*exp(-0.5*((sstS-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)]
+Tresponses[, sst := sstS*sd(sstROMSSites[,ytokeep]) + mean(sstROMSSites[,ytokeep])]
+Tresponses[, phi := mean(dyn_occ$mean$phiInt)*exp(-0.5*((sstS-dyn_occ$mean$Topt2)/dyn_occ$mean$width2)^2)]
+Tresponses[, gamma := mean(dyn_occ$mean$gamInt)*exp(-0.5*((sstS-dyn_occ$mean$Topt3)/dyn_occ$mean$width3)^2)]
+Tresponses[, psi := mean(dyn_occ$mean$psiInt)*exp(-0.5*((sstS-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)]
 
-Tresponses[, plot(sst, phi, type = 'l', ylab = 'Probability')]
+Tresponses[, plot(sst, phi, type = 'l', ylab = 'Probability', ylim = range(c(phi, gamma, psi)))]
 Tresponses[, lines(sst, gamma, type = 'l', col='red')]
 Tresponses[, lines(sst, psi, type = 'l', col='blue')]
 legend('bottomright', col = c('black', 'red', 'blue'), lty = c(1,1), legend = c('phi (persistence)', 'gamma (colonization)', 'psi (initial occupancy)'))
@@ -508,7 +521,7 @@ legend('topright', col = c('black', 'red', 'blue'), lty = c(1,1), legend = c('ph
 
 # Wave responses
 Wresponses <- data.table(hsS = seq(from = min(hsS), to = max(hsS), length.out = 100))
-Wresponses[, hs := hsS*sd(wavesROMSSites) + mean(wavesROMSSites)]
+Wresponses[, hs := hsS*sd(wavesROMSSites[,ytokeep]) + mean(wavesROMSSites[,ytokeep])]
 Wresponses[, phi := plogis(qlogis(dyn_occ$mean$phiInt) + dyn_occ$mean$betaphi_hs*hsS)* 
                exp(-0.5*((0-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)] # persistence response. no colonization response.
 Wresponses[, psi := plogis(qlogis(dyn_occ$mean$psiInt) + dyn_occ$mean$betapsi_hs*hsS)* 
@@ -531,4 +544,42 @@ ggplot(psi_meanlong, aes(x = time, y = site, fill = psi)) +
 
 ```
 
+Detectability through time
+```{r plot detection}
+p_meanlong <- reshape2::melt(dyn_occ$mean$p, varnames = c('time'), value.name = 'p')
+ggplot(p_meanlong, aes(x = time, y = p)) +
+    geom_line()
 
+```
+
+
+
+Plot colonization fits over space and time
+```{r plot colonization predictions}
+if(length(dim(dyn_occ$mean$gamma))==1){
+    gamma_meanlong <- reshape2::melt(dyn_occ$mean$gamma, varnames = c('time'), value.name = 'gamma')
+    ggplot(gamma_meanlong, aes(x = time, y = gamma)) +
+        geom_line()
+} else {
+    gamma_meanlong <- reshape2::melt(dyn_occ$mean$gamma, varnames = c('site', 'time'), value.name = 'gamma')
+    ggplot(gamma_meanlong, aes(x = time, y = site, fill = gamma)) +
+        geom_raster()
+}
+
+```
+
+Plot persistence fits over space and time
+```{r plot persistence predictions}
+if(length(dim(dyn_occ$mean$phi))==1){
+    phi_meanlong <- reshape2::melt(dyn_occ$mean$phi, varnames = c('time'), value.name = 'phi')
+    ggplot(phi_meanlong, aes(x = time, y = phi)) +
+        geom_line()
+} else {
+    phi_meanlong <- reshape2::melt(dyn_occ$mean$phi, varnames = c('site', 'time'), value.name = 'phi')
+    ggplot(phi_meanlong, aes(x = time, y = site, fill = phi)) +
+        geom_raster()
+}
+
+
+
+```

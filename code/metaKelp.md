@@ -1,7 +1,13 @@
 Investigate metapopulation dynamics in kelp
 ================
 
-Builds from Miriam Wanner’s code in
+- [Read in data and set basic
+  params](#read-in-data-and-set-basic-params)
+- [Statistical models like Castorani et al. 2017
+  PRSB.](#statistical-models-like-castorani-et-al-2017-prsb)
+- [Dynamic occupancy model](#dynamic-occupancy-model)
+
+Builds from Miriam Wanner’s data processing code in
 <https://github.com/miriamwanner/kelpsynchrony/blob/0.2.1/Code/init_data_processing.R>
 
 Examines metapopulation dynamics for giant kelp in SoCal, 1984-2021
@@ -68,234 +74,13 @@ survival_rate <- 0.1 # this can be changed to recreate MRM results with differen
 Read in and aggregate biomass, wave, and sst data to match ROMS patches.
 Read in from a file if available, since otherwise slow.
 
-``` r
-# skip the calculations if we already have the files
-if(file.exists(here('temp', 'kelpDataROMSSites.csv')) & file.exists(here('temp', 'oceanAvgKelpSites.csv')) & file.exists(here('temp', 'oceanAnnKelpSites.rds')) & file.exists(here('temp', 'wavesROMSSites.csv')) & file.exists(here('temp', 'sstROMSSites.csv'))){
-    kelpDataROMSSites <- as.matrix(read.csv(here('temp', 'kelpDataROMSSites.csv'), row.names = 1)) # kelp biomass data by site by time step
-    oceanAvgKelpSites <- as.matrix(read.csv(here('temp', 'oceanAvgKelpSites.csv'), row.names = 1)) # ROMS connectivity data by site, time-averaged
-    oceanAnnKelpSites <- readRDS(here('temp', 'oceanAnnKelpSites.rds')) # ROMS connectivity by site by year
-    wavesROMSSites <- as.matrix(read.csv(here('temp', 'wavesROMSSites.csv'), row.names = 1)) # waves by site by time step
-    sstROMSSites <- as.matrix(read.csv(here('temp', 'sstROMSSites.csv'), row.names = 1)) # SST by site by time step
-
-    nc_data <- nc_open(here('data', 'knb-lter-sbc.162.1', 'CAkelpCanopyEnv_2021_final.nc'))
-    years <- ncvar_get(nc_data, 'year') # calendar years for each timestep in the biomass data. could be useful for matching time-varying ROMS output to biomass data
-    quarters <- ncvar_get(nc_data, 'quarter') # quarter of the year for each timestep in the biomass data
-    tsname <- paste0(years, '.', quarters) # a name for each time step of the form YYYY.Q
-    
-} else {
-    print('aggregating from scratch')
-    nc_data <- nc_open(here('data', 'knb-lter-sbc.162.1', 'CAkelpCanopyEnv_2021_final.nc'))
-    kelpBioOriginal <- ncvar_get(nc_data, "biomass") # Matrix for Kelp Biomass
-    waves <- ncvar_get(nc_data, "hsmax") # wave height
-    sst <- ncvar_get(nc_data, "temperature")
-    
-    OceanDistanceMatrices <- readMat(con="data/OceanDistanceMatrices.mat") # matrices of connectivity data (ROMS minimum time of travel in days)
-    ocean.dist.yearly <- OceanDistanceMatrices$oceandist.yearly # yearly data for the connectivity data
-    ocean.dist.mainland <- ocean.dist.yearly[1:135, 1:135, ] # this is a 3D matrix. mainland data from connectivity data.
-    numYears <- dim(ocean.dist.mainland)[3] # this is the number of years the connectivity data has matrices for
-    # for loop that adds each matrix to a list of matrices (to then average after)
-    matList <- list()
-    for(i in 1:numYears){
-        matList[[i]] <- ocean.dist.mainland[,,i]
-    }
-    ocean.dist.avg <- Reduce('+', matList)/length(matList) # this is the average matrix for all time (over the time the data was collected)
-    
-    # DISTANCE KELP/ROMS SITES variables:
-    # kelpCoordinates = coordinates of all the kelp sites from CSV file
-    # romsCoordinates = coordinates of all the ROMS sites from CSV file
-    # numKelpSites = the number of total kelp sites
-    # numROMSSites = the number of total ROMS sites
-    # lonLatKelp = two column matrix of longitude (first column) and latitude (second column) of all kelp sites
-    # lonLatROMS = two column matrix of longitude (first column) and latitude (second column) of all ROMS sites
-    # distMat = matrix of the distances between the all kelp and all ROMS sites in kilometer
-    # vecLocations = ROMS cell that each kelp site corresponds to (index of vector is kelp site)
-    # minDistForLocations = gives the distance between kelp and ROMS site (index of vector is kelp/ROMS site from vecLocations), NA if greater than 12 km away
-    
-    # Get coordinates (lat and lon) of kelp and ROMS data in two data frames
-    kelpCoordinates <- data.frame(Lat = ncvar_get(nc_data, "lat"), 
-                                  Lon = ncvar_get(nc_data, "lon"), 
-                                  Site_Number = 1:nrow(kelpBioOriginal))
-    
-    romsCoordinates <- as.data.frame(t(readMat(con="data/site_centers.mat"))) # this has the centers of the ROMS sites
-    # Matrix of the distance (the columns are the ROMS sites and the rows are the kelp sites)
-    numKelpSites <- length(as.vector(kelpCoordinates$Lat))
-    numROMSSites <- length(as.vector(unlist(romsCoordinates$lat))) # should be 135
-    
-    lonLatKelp <- matrix(c(as.vector(kelpCoordinates$Lon), as.vector(kelpCoordinates$Lat)), ncol = 2)
-    lonLatROMS <- matrix(c(as.vector(unlist(romsCoordinates$lon)), as.vector(unlist(romsCoordinates$lat))), ncol = 2)
-    distMat <- distm(lonLatKelp, lonLatROMS, fun = distHaversine) * (0.001) # multiply to get km
-    
-    vecLocations <- as.matrix(apply(distMat, 1, which.min)) # this will have the ROMS cell that each kelp site corresponds to
-    minDistForLocations <- vector(,length(vecLocations))
-    for(i in 1:length(vecLocations)){
-        minDistForLocations[i] <- distMat[i, vecLocations[i]]
-    }
-    # do not use data that is greater than 12 km away (cells have 5 km radius) from the ROMS cell (make this data NA, and will remove from data set later)
-    for(i in 1:length(minDistForLocations)){
-        if(minDistForLocations[i] > 12){
-            minDistForLocations[i] <- NA
-            vecLocations[i] <- NA
-        }
-    }
-    
-    # KELP/ROMS SITES CORRESPONDING TO EACHOTHER variables:
-    # ROMSSitesVec = vector of ROMS sites to be used, NA if no kelp data that corresponds to it
-    # newSites = index is the row number of the kelpDataROMSSites and value is which ROMS cell it corresponds to
-    # kelpDataROMSSites = kelp data (added when multiple sites fit with the same ROMS site) for the ROMS sites
-    # oceanAvgKelpSites = ROMS connectivity data, but deleted the sites we aren't using (no kelp site corresponds to it), diagonal is zero
-    # rowColToDel = the ROMS sites being deleted
-    
-    # make a vector of ROMS (mainland) cells and make ones NA if there is no kelp data sites that correspond to it
-    # start with a vector of NA, and just change them if there is a kelp site that corresponds to it
-    ROMSSitesVec <- rep(NA, numROMSSites)
-    for(i in 1:length(vecLocations)){
-        ROMSSitesVec[vecLocations[i]] <- vecLocations[i]
-    }
-    # Create the data so that the sites now correspond to one another
-    # new data frame that has all the kelp data, but corresponding to each of the connectivity data, and ordered by connectivity data
-    newSites <- vector(,120) # index is the row number of the kelpDataROMSSites and value is which ROMS cell it corresponds to 
-    kelpDataROMSSites <- kelpBioOriginal[0:120,] # first 120 rows, but the data will be replaced with ROMS data
-    counter <- 0
-    for(i in 1:nrow(kelpBioOriginal)){ # long loop
-        loc <- which(vecLocations == i)
-        if(length(loc) > 1){
-            counter <- counter + 1
-            newSites[counter] <- i
-            kelpDataROMSSites[counter,] <- colSums(x = kelpBioOriginal[loc,], na.rm = TRUE)
-        }
-        if(length(loc) == 1){
-            counter <- counter + 1
-            newSites[counter] <- i
-            kelpDataROMSSites[counter,] <- kelpBioOriginal[loc,]
-        }
-        if (i %% 50000 == 0){
-            print(i)    
-        }
-    }
-    # delete the row/corresponding column if there are NA values
-    whichSitesNA <- which(rowSums(is.na(kelpDataROMSSites)) > 0)
-    kelpDataROMSSites <- kelpDataROMSSites[-whichSitesNA,]
-    
-    # write out kelp biomass file
-    rownames(kelpDataROMSSites) <- 1:nrow(kelpDataROMSSites)
-    colnames(kelpDataROMSSites) <- tsname
-    write.csv(kelpDataROMSSites, file = 'temp/kelpDataROMSSites.csv')
-   
-    
-    # delete rows/columns of the connectivity data (time-averaged or time-varying)
-    oceanAvgKelpSites <- ocean.dist.avg # start with the time-averaged matrix, but then remove the sites
-    oceanAnnKelpSites <- ocean.dist.mainland # the time-varying array
-    i <- length(ROMSSitesVec)
-    while(i >= 1){ # goes through the matrix and sets the row/column to all be na
-        if(is.na(ROMSSitesVec[i])){
-            oceanAvgKelpSites[i,] <- NA
-            oceanAvgKelpSites[,i] <- NA
-        }
-        i <- i - 1
-    }
-    rowColToDel <- which(is.na(ROMSSitesVec))
-    oceanAvgKelpSites <- oceanAvgKelpSites[-rowColToDel, -rowColToDel] # removes the columns/rows that have na in them
-    oceanAvgKelpSites <- oceanAvgKelpSites[-whichSitesNA, -whichSitesNA]
-    diag(oceanAvgKelpSites) <- 0 # set the diagonal to zero
-    
-    oceanAnnKelpSites <- oceanAnnKelpSites[-rowColToDel, -rowColToDel, ] # removes the columns/rows that have na in them
-    oceanAnnKelpSites <- oceanAnnKelpSites[-whichSitesNA, -whichSitesNA, ]
-    for(i in 1:dim(oceanAnnKelpSites)[3]){
-        diag(oceanAnnKelpSites[,,i]) <- 0 # set the diagonal to zero
-    }
-    
-    # write out connectivity file
-    write.csv(oceanAvgKelpSites, file = 'temp/oceanAvgKelpSites.csv')
-    saveRDS(oceanAnnKelpSites, file = 'temp/oceanAnnKelpSites.rds')
-    
-    # Aggregate waves data
-    wavesROMSSites <- waves[0:120,]
-    counter <- 0
-    for(i in 1:nrow(waves)){ # long loop (330000 rows)
-        loc <- which(vecLocations == i)
-        if(length(loc) > 1){
-            counter <- counter + 1
-            wavesROMSSites[counter,] <- colSums(x = waves[loc,], na.rm = TRUE) / length(loc) 
-        }
-        if(length(loc) == 1){
-            counter <- counter + 1
-            wavesROMSSites[counter,] <- waves[loc,] 
-        }
-        if (i %% 50000 == 0){
-            print(i)    
-        }
-    }
-    wavesROMSSites <- wavesROMSSites[-whichSitesNA,]
-    
-    # write out waves file
-    rownames(wavesROMSSites) <- 1:nrow(wavesROMSSites)
-    colnames(wavesROMSSites) <- tsname
-    write.csv(wavesROMSSites, file = 'temp/wavesROMSSites.csv')
-    
-    # Aggregate SST data
-    sstROMSSites <- sst[0:120,]
-    counter <- 0
-    for(i in 1:nrow(sst)){ # long loop (330000 rows)
-        loc <- which(vecLocations == i)
-        if(length(loc) > 1){
-            counter <- counter + 1
-            sstROMSSites[counter,] <- colSums(x = sst[loc,], na.rm = TRUE) / length(loc) 
-        }
-        if(length(loc) == 1){
-            counter <- counter + 1
-            sstROMSSites[counter,] <- sst[loc,] 
-        }
-        if (i %% 50000 == 0){
-            print(i)    
-        }
-    }
-    sstROMSSites <- sstROMSSites[-whichSitesNA,]
-    
-    # write out sst file
-    rownames(sstROMSSites) <- 1:nrow(sstROMSSites)
-    colnames(sstROMSSites) <- tsname
-    write.csv(sstROMSSites, file = 'temp/sstROMSSites.csv')
-}
-```
-
 Calculate fecundity and dispersal probability. Uses the survival rate
 set in the first code block.
-
-``` r
-# FECUNDITY AND PROBABILITY MATRIX variables:
-# kelpFecundity = calculation of kelp fecundity - each cell is one site and year
-# probMat = each cell is (0.1)^(days in connectivity matrix), diagonal is zero
-# probMatFecundity = the probability matrix where each element is multiplied by the fecundity of each donor patch (similar to formula 1 in table of paper)
-
-# fecundity in sorus area density, from Castorani et al. 2017 PRSB
-kelpFecundity <- 1463 * sqrt(kelpDataROMSSites)
-
-# create a time-averaged dispersal probability matrix and probability matrix multiplied by time-varying fecundity
-probMatavg <- (survival_rate)^oceanAvgKelpSites # time-averaged dispersal probability
-diag(probMatavg) <- 0
-# multiply each element of the probability matrix by the fecundity of each donor patch
-probMatavg_Fecundityvar <- array(data = NA, dim = c(nrow(probMatavg), ncol(probMatavg), ncol(kelpFecundity)))
-for(j in 1:dim(probMatavg_Fecundityvar)[3]){ # for each time step
-    for(i in 1:dim(probMatavg_Fecundityvar)[1]){ # for each source(?) site
-        probMatavg_Fecundityvar[i,,j] <- (probMatavg[i,] * kelpFecundity[i,j])
-    }
-}
-
-# sum connectivity by destination site and year
-# I think destinations are columns based on the metadata at https://portal.edirepository.org/nis/metadataviewer?packageid=knb-lter-sbc.158.1
-connbySitebyYear <- apply(probMatavg_Fecundityvar, MARGIN = c(2,3), FUN = sum)
-rownames(connbySitebyYear) <- 1:nrow(connbySitebyYear)
-colnames(connbySitebyYear) <- tsname
-    
-
-# create a time-varying dispersal probability matrix and probability matrix multiplied by time-varying fecundity
-# skipped for now because it would restrict the time window to 1996-2007 (instead of 1984-2021)
-# time-varying physical transport also isn't hugely important (Castorani et al. 2017 PRSB)
-```
 
 Reshape the data into long format and plot.
 
 ``` r
+# plot biomass
 kelpDataROMSSiteslong <- melt(kelpDataROMSSites, varnames = c('site', 'time'), value.name = 'biomass')
 ```
 
@@ -319,6 +104,31 @@ ggplot(kelpDataROMSSiteslong, aes(x = time, y = site, fill = sqrt(biomass))) +
 ![](metaKelp_files/figure-gfm/unnamed-chunk-1-1.png)<!-- -->
 
 ``` r
+# plot occupancy
+kelpDataROMSSiteslong <- melt(kelpDataROMSSites, varnames = c('site', 'time'), value.name = 'biomass')
+```
+
+    ## Warning in melt(kelpDataROMSSites, varnames = c("site", "time"), value.name =
+    ## "biomass"): The melt generic in data.table has been passed a matrix and will
+    ## attempt to redirect to the relevant reshape2 method; please note that reshape2
+    ## is deprecated, and this redirection is now deprecated as well. To continue
+    ## using melt methods from reshape2 while both libraries are attached, e.g.
+    ## melt.list, you can prepend the namespace like
+    ## reshape2::melt(kelpDataROMSSites). In the next version, this warning will
+    ## become an error.
+
+``` r
+kelpDataROMSSiteslong$time <- gsub('X', '', as.character(kelpDataROMSSiteslong$time))
+ggplot(kelpDataROMSSiteslong, aes(x = time, y = site, fill = I(biomass>0)*1+1)) +
+    geom_raster() + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 6)) +
+    coord_cartesian(ylim = c(0, 117), expand = FALSE)
+```
+
+![](metaKelp_files/figure-gfm/unnamed-chunk-1-2.png)<!-- -->
+
+``` r
+# plot SST
 sstROMSSiteslong <- melt(sstROMSSites, varnames = c('site', 'time'), value.name = 'sst')
 ```
 
@@ -337,9 +147,10 @@ ggplot(sstROMSSiteslong, aes(x = time, y = sst, group = site)) +
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 6)) 
 ```
 
-![](metaKelp_files/figure-gfm/unnamed-chunk-1-2.png)<!-- -->
+![](metaKelp_files/figure-gfm/unnamed-chunk-1-3.png)<!-- -->
 
 ``` r
+# plot waves
 wavesROMSSiteslong <- melt(wavesROMSSites, varnames = c('site', 'time'), value.name = 'hs')
 ```
 
@@ -358,9 +169,10 @@ ggplot(wavesROMSSiteslong, aes(x = time, y = hs, group = site)) +
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 6))
 ```
 
-![](metaKelp_files/figure-gfm/unnamed-chunk-1-3.png)<!-- -->
+![](metaKelp_files/figure-gfm/unnamed-chunk-1-4.png)<!-- -->
 
 ``` r
+# plot connectivity
 connbySitebyYearlong <- melt(connbySitebyYear, varnames = c('site', 'time'), value.name = 'connectivity')
 ```
 
@@ -380,7 +192,7 @@ ggplot(connbySitebyYearlong, aes(x = time, y = connectivity, group = site)) +
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 6))
 ```
 
-![](metaKelp_files/figure-gfm/unnamed-chunk-1-4.png)<!-- -->
+![](metaKelp_files/figure-gfm/unnamed-chunk-1-5.png)<!-- -->
 
 # Statistical models like Castorani et al. 2017 PRSB.
 
@@ -460,7 +272,7 @@ names(maxbio) <- c('site', 'maxbio')
 maxbio$maxbio.log <- log(maxbio$maxbio)
 kelpstats <- merge(kelpstats, maxbio)
 
-# add sst
+# add sst. trim out years without data.
 sstROMSSiteslong$year <- as.numeric(sapply(strsplit(sstROMSSiteslong$time, split='\\.', ), `[`, 1))
 sstROMSSiteslong$quarter <- as.numeric(sapply(strsplit(sstROMSSiteslong$time, split='\\.', ), `[`, 2))
 sstROMSSiteslong$sem <- ifelse(sstROMSSiteslong$quarter < 3, 1, 2)
@@ -507,7 +319,7 @@ kelpstats$prevocc.f <- as.factor(kelpstats$prevocc)
 kelpstats$hs.log <- log(kelpstats$hs+1)
 ```
 
-Basic model. Ignore patch area for now
+Basic model. Use maxbio instead of patch area for now
 
 ``` r
 mod <- glmmTMB(occ ~ connectivity.log + prevocc.f + maxbio.log + (1|year/sem) + (1|site), data = kelpstats, family = binomial(link = 'logit'))
@@ -586,27 +398,27 @@ plot(toplot5)
 Read in from file if temp/dyn_occ.rds exists
 
 ``` r
-if(file.exists(here('temp', 'dyn_occ.rds'))){
-    dyn_occ <- readRDS(here('temp', 'dyn_occ.rds'))
+#model <- 'dyn_occ_null'
+model <- 'dyn_occ_temp'
 
-    # Standardize covariates
-    sstS <- wiqid::standardize(sstROMSSites)
-    hsS <- wiqid::standardize(wavesROMSSites)
-    maxbio.logS <- wiqid::standardize(matrix(maxbio$maxbio.log, nrow=nrow(sstS), ncol=ncol(sstS), byrow=FALSE))
-    
+# Standardize covariates
+ytokeep <- 6:152 # trim to years with sst
+sstS <- wiqid::standardize(sstROMSSites[,ytokeep])
+hsS <- wiqid::standardize(wavesROMSSites[,ytokeep])
+maxbio.logS <- wiqid::standardize(matrix(maxbio$maxbio.log, nrow=nrow(sstS), ncol=ncol(sstS), byrow=FALSE))
+
+if(file.exists(here('temp', paste0(model, '.rds')))){
+    dyn_occ <- readRDS(here('temp', paste0(model, '.rds')))
+    print('read jags fit from file')
+
 } else {
     
-    z <- (kelpDataROMSSites > 0)*1 # matrix of occupied (1) or not (NA). rows are sites, cols are time.
+    z <- (kelpDataROMSSites[,ytokeep] > 0)*1 # matrix of occupied (1) or not (NA). rows are sites, cols are time.
     z[z == 0] <- NA
     
-    # Standardize covariates
-    sstS <- wiqid::standardize(sstROMSSites)
-    hsS <- wiqid::standardize(wavesROMSSites)
-    maxbio.logS <- wiqid::standardize(matrix(maxbio$maxbio.log, nrow=nrow(sstS), ncol=ncol(sstS), byrow=FALSE))
-    
-    jdata <- list(nSites = nrow(z), nYears = ncol(z), y =(kelpDataROMSSites>0)*1,
+    jdata <- list(nSites = nrow(z), nYears = ncol(z), y =(kelpDataROMSSites[,ytokeep]>0)*1,
                   z = z,  
-                  n = kelpDataROMSSites, # use biomass for abundance proxy
+                  n = (kelpDataROMSSites[,ytokeep]>0)*100, # use 100 for abundance proxy. detection is ~1/this
                   sst = sstS, 
                   hs = hsS,
                   maxbio = maxbio.logS)
@@ -614,18 +426,20 @@ if(file.exists(here('temp', 'dyn_occ.rds'))){
     wanted <- c("Topt1", "width1", "Topt2", "width2", "Topt3", "width3", 
                 "betapsi_maxbio", "betaphi_maxbio", "betagam_maxbio",
                 "betapsi_hs", "betaphi_hs", 
-                "N", "gamma", "phi", "psi",
+                "N", "gamma", "phi", "psi", "psi1",
                 "psiInt", "phiInt", "gamInt", "p",
                 "log.lik")
     
     dyn_occ <- jagsUI::jags(data = jdata, inits = NULL, parameters.to.save = wanted, 
-                            model.file = here('code', "dyn_occ.jags"),
+                            model.file = here('code', paste0(model, '.jags')),
                             n.thin = 50,
                             n.chains=2, n.iter=10000, DIC=TRUE, parallel=TRUE, verbose=TRUE)
     
-    saveRDS(dyn_occ, here('temp', 'dyn_occ.rds'))
+    saveRDS(dyn_occ, here('temp', paste0(model, '.rds')))
 }
 ```
+
+    ## [1] "read jags fit from file"
 
 Examine model output
 
@@ -647,20 +461,18 @@ library(loo)
 
 jagsUI::traceplot(dyn_occ, parameters = c("Topt1", "width1", "Topt2", "width2", "Topt3", "width3", 
             "betapsi_maxbio", "betaphi_maxbio", "betagam_maxbio",
-            "betapsi_hs", "betaphi_hs", 
-            "psiInt", "phiInt", "gamInt", "p"))
+            "betapsi_hs", "betaphi_hs"))
 ```
 
-![](metaKelp_files/figure-gfm/dynocc%20examination-1.png)<!-- -->![](metaKelp_files/figure-gfm/dynocc%20examination-2.png)<!-- -->
+![](metaKelp_files/figure-gfm/dynocc%20examination-1.png)<!-- -->
 
 ``` r
 jagsUI::densityplot(dyn_occ, parameters = c("Topt1", "width1", "Topt2", "width2", "Topt3", "width3", 
             "betapsi_maxbio", "betaphi_maxbio", "betagam_maxbio",
-            "betapsi_hs", "betaphi_hs", 
-            "psiInt", "phiInt", "gamInt", "p"))
+            "betapsi_hs", "betaphi_hs"))
 ```
 
-![](metaKelp_files/figure-gfm/dynocc%20examination-3.png)<!-- -->![](metaKelp_files/figure-gfm/dynocc%20examination-4.png)<!-- -->
+![](metaKelp_files/figure-gfm/dynocc%20examination-2.png)<!-- -->
 
 ``` r
 # WAIC and LOO
@@ -674,14 +486,14 @@ jagsUI::densityplot(dyn_occ, parameters = c("Topt1", "width1", "Topt2", "width2"
 Plot environmental functions
 
 ``` r
-# Temperature
+# Temperature. Average over spatial and temporal variation in intercepts
 Tresponses <- data.table(sstS = seq(from = min(sstS), to = max(sstS), length.out = 100))
-Tresponses[, sst := sstS*sd(sstROMSSites) + mean(sstROMSSites)]
-Tresponses[, phi := dyn_occ$mean$phiInt*exp(-0.5*((sstS-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)]
-Tresponses[, gamma := dyn_occ$mean$gamInt*exp(-0.5*((sstS-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)]
-Tresponses[, psi := dyn_occ$mean$psiInt*exp(-0.5*((sstS-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)]
+Tresponses[, sst := sstS*sd(sstROMSSites[,ytokeep]) + mean(sstROMSSites[,ytokeep])]
+Tresponses[, phi := mean(dyn_occ$mean$phiInt)*exp(-0.5*((sstS-dyn_occ$mean$Topt2)/dyn_occ$mean$width2)^2)]
+Tresponses[, gamma := mean(dyn_occ$mean$gamInt)*exp(-0.5*((sstS-dyn_occ$mean$Topt3)/dyn_occ$mean$width3)^2)]
+Tresponses[, psi := mean(dyn_occ$mean$psiInt)*exp(-0.5*((sstS-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)]
 
-Tresponses[, plot(sst, phi, type = 'l', ylab = 'Probability')]
+Tresponses[, plot(sst, phi, type = 'l', ylab = 'Probability', ylim = range(c(phi, gamma, psi)))]
 ```
 
     ## NULL
@@ -741,7 +553,7 @@ legend('topright', col = c('black', 'red', 'blue'), lty = c(1,1), legend = c('ph
 ``` r
 # Wave responses
 Wresponses <- data.table(hsS = seq(from = min(hsS), to = max(hsS), length.out = 100))
-Wresponses[, hs := hsS*sd(wavesROMSSites) + mean(wavesROMSSites)]
+Wresponses[, hs := hsS*sd(wavesROMSSites[,ytokeep]) + mean(wavesROMSSites[,ytokeep])]
 Wresponses[, phi := plogis(qlogis(dyn_occ$mean$phiInt) + dyn_occ$mean$betaphi_hs*hsS)* 
                exp(-0.5*((0-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)] # persistence response. no colonization response.
 Wresponses[, psi := plogis(qlogis(dyn_occ$mean$psiInt) + dyn_occ$mean$betapsi_hs*hsS)* 
@@ -774,3 +586,45 @@ ggplot(psi_meanlong, aes(x = time, y = site, fill = psi)) +
 ```
 
 ![](metaKelp_files/figure-gfm/plot%20occupancy%20predictions-1.png)<!-- -->
+
+Detectability through time
+
+``` r
+p_meanlong <- reshape2::melt(dyn_occ$mean$p, varnames = c('time'), value.name = 'p')
+ggplot(p_meanlong, aes(x = time, y = p)) +
+    geom_line()
+```
+
+![](metaKelp_files/figure-gfm/plot%20detection-1.png)<!-- -->
+
+Plot colonization fits over space and time
+
+``` r
+if(length(dim(dyn_occ$mean$gamma))==1){
+    gamma_meanlong <- reshape2::melt(dyn_occ$mean$gamma, varnames = c('time'), value.name = 'gamma')
+    ggplot(gamma_meanlong, aes(x = time, y = gamma)) +
+        geom_line()
+} else {
+    gamma_meanlong <- reshape2::melt(dyn_occ$mean$gamma, varnames = c('site', 'time'), value.name = 'gamma')
+    ggplot(gamma_meanlong, aes(x = time, y = site, fill = gamma)) +
+        geom_raster()
+}
+```
+
+![](metaKelp_files/figure-gfm/plot%20colonization%20predictions-1.png)<!-- -->
+
+Plot persistence fits over space and time
+
+``` r
+if(length(dim(dyn_occ$mean$phi))==1){
+    phi_meanlong <- reshape2::melt(dyn_occ$mean$phi, varnames = c('time'), value.name = 'phi')
+    ggplot(phi_meanlong, aes(x = time, y = phi)) +
+        geom_line()
+} else {
+    phi_meanlong <- reshape2::melt(dyn_occ$mean$phi, varnames = c('site', 'time'), value.name = 'phi')
+    ggplot(phi_meanlong, aes(x = time, y = site, fill = phi)) +
+        geom_raster()
+}
+```
+
+![](metaKelp_files/figure-gfm/plot%20persistence%20predictions-1.png)<!-- -->
