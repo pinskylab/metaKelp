@@ -42,17 +42,17 @@ model{
         p[t] ~ dbeta(1, 1)
     }
     
-    Topt1 ~ dnorm(0,20)
+    Topt1 ~ dnorm(0,1E-3) # parameterized as mean, precision
     width1 ~ dunif(0,20)
-    Topt2 ~ dnorm(0,20)
+    Topt2 ~ dnorm(0,1E-3)
     width2 ~ dunif(0,20)
-    Topt3 ~ dnorm(0,20)
+    Topt3 ~ dnorm(0,1E-3)
     width3 ~ dunif(0,20)
-    betapsi_maxbio ~ dnorm(0,5)
-    betapsi_hs ~ dnorm(0,5)
-    betaphi_maxbio ~ dnorm(0,5)
-    betaphi_hs ~ dnorm(0,5)
-    betagam_maxbio ~ dnorm(0,5)
+    betapsi_maxbio ~ dnorm(0,1E-3)
+    betapsi_hs ~ dnorm(0,1E-3)
+    betaphi_maxbio ~ dnorm(0,1E-3)
+    betaphi_hs ~ dnorm(0,1E-3)
+    betagam_maxbio ~ dnorm(0,1E-3)
     
     # Derived variable
     for(t in 1:nYears) {
