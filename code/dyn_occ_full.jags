@@ -3,18 +3,17 @@
 model{
     for(i in 1:nSites) {
         # biological process
-        lpsi1[i] <- lpsiInt + betapsi_maxbio*maxbio[i,1] + betapsi_hs*hs[i,1] # logit part of first-year occupancy
+        lpsi1[i] <- lpsiInt[i] + betapsi_maxbio*maxbio[i,1] + betapsi_hs*hs[i,1] # logit part of first-year occupancy
         psi[i,1] <- ilogit(lpsi1[i])*exp(-0.5*((sst[i,1]-Topt1)/width1)^2) # full first-year occupancy equation
         z[i, 1] ~ dbern(psi[i,1]) # occupancy state
     
         for(t in 2:nYears) { # for each subsequent year
-            lphi[i, t-1] <- lphiInt + betaphi_maxbio*maxbio[i,t-1] + betaphi_hs*hs[i,t-1] # logit part of persistence probability 
-            phi[i, t-1] <-
-                ilogit(lphi[i,t-1])*exp(-0.5*((sst[i,t-1]-Topt2)/width2)^2) # full persistence probability
-            lgam[i, t-1] <- lgamInt + 
-                betagam_maxbio*maxbio[i,t-1] # logit part of colonization probability
-            gamma[i, t-1] <- 
-                ilogit(lgam[i, t-1])*exp(-0.5*((sst[i,t-1]-Topt3)/width3)^2) # full colonization probability
+            lphi[i, t-1] <- lphiInt[i,t-1] + betaphi_maxbio*maxbio[i,t-1] + betaphi_hs*hs[i,t-1] # logit part of persistence probability 
+            phi[i, t-1] <- ilogit(lphi[i,t-1])*exp(-0.5*((sst[i,t-1]-Topt2)/width2)^2) # full persistence probability
+            
+            lgam[i, t-1] <- lgamInt[i,t-1] + betagam_maxbio*maxbio[i,t-1] # logit part of colonization probability
+            gamma[i, t-1] <- ilogit(lgam[i, t-1])*exp(-0.5*((sst[i,t-1]-Topt3)/width3)^2) # full colonization probability
+            
             psi[i,t] <- z[i, t-1]*phi[i, t-1] + (1 - z[i, t-1])*gamma[i, t-1] # occupancy probability
             z[i, t] ~ dbern(psi[i,t]) # occupancy state
         }
@@ -27,23 +26,28 @@ model{
     }
 
     # Priors
-    psiInt ~ dbeta(1, 1)
-    lpsiInt <- logit(psiInt)
-    phiInt ~ dbeta(1, 1)
-    lphiInt <- logit(phiInt)
-    gamInt ~ dbeta(1, 1)
-    lgamInt <- logit(gamInt)
-
+    for(i in 1:nSites) {
+        psiInt[i] ~ dbeta(1, 1) # same as uniform(0,1)
+        lpsiInt[i] <- logit(psiInt[i])
+        for(t in 1:(nYears-1)){
+            phiInt[i,t] ~ dbeta(1, 1)
+            lphiInt[i,t] <- logit(phiInt[i,t])
+            gamInt[i,t] ~ dbeta(1, 1)
+            lgamInt[i,t] <- logit(gamInt[i,t])
+        }
+   }
+    
+ 
     for(t in 1:nYears) {
         p[t] ~ dbeta(1, 1)
     }
     
-    Topt1 ~ dnorm(8,16)
-    width1 ~ dnorm(5,10)
-    Topt2 ~ dnorm(8,16)
-    width2 ~ dnorm(5,10)
-    Topt3 ~ dnorm(8,16)
-    width3 ~ dnorm(5,10)
+    Topt1 ~ dnorm(0,20)
+    width1 ~ dunif(0,20)
+    Topt2 ~ dnorm(0,20)
+    width2 ~ dunif(0,20)
+    Topt3 ~ dnorm(0,20)
+    width3 ~ dunif(0,20)
     betapsi_maxbio ~ dnorm(0,5)
     betapsi_hs ~ dnorm(0,5)
     betaphi_maxbio ~ dnorm(0,5)

@@ -3,9 +3,21 @@ Investigate metapopulation dynamics in kelp
 
 - [Read in data and set basic
   params](#read-in-data-and-set-basic-params)
+  - [Plot the data](#plot-the-data)
 - [Statistical models like Castorani et al. 2017
   PRSB.](#statistical-models-like-castorani-et-al-2017-prsb)
+  - [Basic model.](#basic-model)
+  - [Models with temperature and
+    waves.](#models-with-temperature-and-waves)
 - [Dynamic occupancy model](#dynamic-occupancy-model)
+  - [Plot environmental functions](#plot-environmental-functions)
+  - [Plot occupancy fits over space and
+    time](#plot-occupancy-fits-over-space-and-time)
+  - [Detectability through time](#detectability-through-time)
+  - [Plot colonization fits over space and
+    time](#plot-colonization-fits-over-space-and-time)
+  - [Plot persistence fits over space and
+    time](#plot-persistence-fits-over-space-and-time)
 
 Builds from Miriam Wanner’s data processing code in
 <https://github.com/miriamwanner/kelpsynchrony/blob/0.2.1/Code/init_data_processing.R>
@@ -77,7 +89,7 @@ Read in from a file if available, since otherwise slow.
 Calculate fecundity and dispersal probability. Uses the survival rate
 set in the first code block.
 
-Reshape the data into long format and plot.
+## Plot the data
 
 ``` r
 # plot biomass
@@ -319,7 +331,9 @@ kelpstats$prevocc.f <- as.factor(kelpstats$prevocc)
 kelpstats$hs.log <- log(kelpstats$hs+1)
 ```
 
-Basic model. Use maxbio instead of patch area for now
+## Basic model.
+
+Use maxbio instead of patch area for now
 
 ``` r
 mod <- glmmTMB(occ ~ connectivity.log + prevocc.f + maxbio.log + (1|year/sem) + (1|site), data = kelpstats, family = binomial(link = 'logit'))
@@ -344,8 +358,10 @@ plot(toplot2)
 
 ![](metaKelp_files/figure-gfm/stats-3.png)<!-- -->
 
-Models with temperature and waves. Lower probability of occupancy with
-higher temperatures or waves, as expected.
+## Models with temperature and waves.
+
+Lower probability of occupancy with higher temperatures or waves, as
+expected.
 
 ``` r
 mod_env <- glmmTMB(occ ~ connectivity.log + prevocc.f + maxbio.log + sst + hs.log + (1|year/sem) + (1|site), data = kelpstats, family = binomial(link = 'logit'))
@@ -395,11 +411,13 @@ plot(toplot5)
 
 # Dynamic occupancy model
 
-Read in from file if temp/dyn_occ.rds exists
+Read in from file if it exists. Inspired by
+<https://bcss.org.my/tut/bayes-with-jags-a-tutorial-for-wildlife-researchers/occupancy-modelling/dynamic-occupancy-modelling/>
 
 ``` r
 #model <- 'dyn_occ_null'
-model <- 'dyn_occ_temp'
+#model <- 'dyn_occ_temp'
+model <- 'dyn_occ_full'
 
 # Standardize covariates
 ytokeep <- 6:152 # trim to years with sst
@@ -418,7 +436,7 @@ if(file.exists(here('temp', paste0(model, '.rds')))){
     
     jdata <- list(nSites = nrow(z), nYears = ncol(z), y =(kelpDataROMSSites[,ytokeep]>0)*1,
                   z = z,  
-                  n = (kelpDataROMSSites[,ytokeep]>0)*100, # use 100 for abundance proxy. detection is ~1/this
+                  n = (kelpDataROMSSites[,ytokeep]>0)*5, # set an abundance proxy. detection is ~1/proxy value
                   sst = sstS, 
                   hs = hsS,
                   maxbio = maxbio.logS)
@@ -464,7 +482,7 @@ jagsUI::traceplot(dyn_occ, parameters = c("Topt1", "width1", "Topt2", "width2", 
             "betapsi_hs", "betaphi_hs"))
 ```
 
-![](metaKelp_files/figure-gfm/dynocc%20examination-1.png)<!-- -->
+![](metaKelp_files/figure-gfm/dynocc%20examination-1.png)<!-- -->![](metaKelp_files/figure-gfm/dynocc%20examination-2.png)<!-- -->
 
 ``` r
 jagsUI::densityplot(dyn_occ, parameters = c("Topt1", "width1", "Topt2", "width2", "Topt3", "width3", 
@@ -472,7 +490,7 @@ jagsUI::densityplot(dyn_occ, parameters = c("Topt1", "width1", "Topt2", "width2"
             "betapsi_hs", "betaphi_hs"))
 ```
 
-![](metaKelp_files/figure-gfm/dynocc%20examination-2.png)<!-- -->
+![](metaKelp_files/figure-gfm/dynocc%20examination-3.png)<!-- -->![](metaKelp_files/figure-gfm/dynocc%20examination-4.png)<!-- -->
 
 ``` r
 # WAIC and LOO
@@ -483,15 +501,18 @@ jagsUI::densityplot(dyn_occ, parameters = c("Topt1", "width1", "Topt2", "width2"
 # loo0 <- loo(loglik0); loo0
 ```
 
-Plot environmental functions
+## Plot environmental functions
+
+Plot using the mean intercept across time and space (if multiple were
+estimated).
 
 ``` r
 # Temperature. Average over spatial and temporal variation in intercepts
 Tresponses <- data.table(sstS = seq(from = min(sstS), to = max(sstS), length.out = 100))
 Tresponses[, sst := sstS*sd(sstROMSSites[,ytokeep]) + mean(sstROMSSites[,ytokeep])]
+Tresponses[, psi := mean(dyn_occ$mean$psiInt)*exp(-0.5*((sstS-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)]
 Tresponses[, phi := mean(dyn_occ$mean$phiInt)*exp(-0.5*((sstS-dyn_occ$mean$Topt2)/dyn_occ$mean$width2)^2)]
 Tresponses[, gamma := mean(dyn_occ$mean$gamInt)*exp(-0.5*((sstS-dyn_occ$mean$Topt3)/dyn_occ$mean$width3)^2)]
-Tresponses[, psi := mean(dyn_occ$mean$psiInt)*exp(-0.5*((sstS-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)]
 
 Tresponses[, plot(sst, phi, type = 'l', ylab = 'Probability', ylim = range(c(phi, gamma, psi)))]
 ```
@@ -520,11 +541,11 @@ legend('bottomright', col = c('black', 'red', 'blue'), lty = c(1,1), legend = c(
 # Maxbio responses
 Bresponses <- data.table(maxbio.logS = seq(from = min(maxbio.logS), to = max(maxbio.logS), length.out = 100))
 Bresponses[, maxbio.log := maxbio.logS*sd(maxbio$maxbio.log) + mean(maxbio$maxbio.log)]
-Bresponses[, phi := plogis(qlogis(dyn_occ$mean$phiInt) + dyn_occ$mean$betaphi_maxbio*maxbio.logS)* 
+Bresponses[, psi := plogis(qlogis(mean(dyn_occ$mean$psiInt)) + dyn_occ$mean$betapsi_maxbio*maxbio.logS)* 
                exp(-0.5*((0-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)]
-Bresponses[, gamma := plogis(qlogis(dyn_occ$mean$gamInt) + dyn_occ$mean$betagam_maxbio*maxbio.logS)* 
+Bresponses[, phi := plogis(qlogis(mean(dyn_occ$mean$phiInt)) + dyn_occ$mean$betaphi_maxbio*maxbio.logS)* 
                exp(-0.5*((0-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)]
-Bresponses[, psi := plogis(qlogis(dyn_occ$mean$psiInt) + dyn_occ$mean$betapsi_maxbio*maxbio.logS)* 
+Bresponses[, gamma := plogis(qlogis(mean(dyn_occ$mean$gamInt)) + dyn_occ$mean$betagam_maxbio*maxbio.logS)* 
                exp(-0.5*((0-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)]
 
 Bresponses[, plot(maxbio.log, phi, type = 'l', ylab = 'Probability', ylim=c(0,1))]
@@ -554,10 +575,10 @@ legend('topright', col = c('black', 'red', 'blue'), lty = c(1,1), legend = c('ph
 # Wave responses
 Wresponses <- data.table(hsS = seq(from = min(hsS), to = max(hsS), length.out = 100))
 Wresponses[, hs := hsS*sd(wavesROMSSites[,ytokeep]) + mean(wavesROMSSites[,ytokeep])]
-Wresponses[, phi := plogis(qlogis(dyn_occ$mean$phiInt) + dyn_occ$mean$betaphi_hs*hsS)* 
-               exp(-0.5*((0-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)] # persistence response. no colonization response.
-Wresponses[, psi := plogis(qlogis(dyn_occ$mean$psiInt) + dyn_occ$mean$betapsi_hs*hsS)* 
+Wresponses[, psi := plogis(qlogis(mean(dyn_occ$mean$psiInt)) + dyn_occ$mean$betapsi_hs*hsS)* 
                exp(-0.5*((0-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)] # initial occupancy response
+Wresponses[, phi := plogis(qlogis(mean(dyn_occ$mean$phiInt)) + dyn_occ$mean$betaphi_hs*hsS)* 
+               exp(-0.5*((0-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)] # persistence response. no colonization response.
 
 Wresponses[, plot(hs, phi, type = 'l', ylab = 'Probability', ylim=c(0,1))]
 ```
@@ -576,7 +597,7 @@ legend('bottomright', col = c('black', 'red', 'blue'), lty = c(1,1), legend = c(
 
 ![](metaKelp_files/figure-gfm/dynocc%20environmental%20plots-3.png)<!-- -->
 
-Plot occupancy fits over space and time
+## Plot occupancy fits over space and time
 
 ``` r
 psi_meanlong <- reshape2::melt(dyn_occ$mean$psi, varnames = c('site', 'time'), value.name = 'psi')
@@ -587,7 +608,7 @@ ggplot(psi_meanlong, aes(x = time, y = site, fill = psi)) +
 
 ![](metaKelp_files/figure-gfm/plot%20occupancy%20predictions-1.png)<!-- -->
 
-Detectability through time
+## Detectability through time
 
 ``` r
 p_meanlong <- reshape2::melt(dyn_occ$mean$p, varnames = c('time'), value.name = 'p')
@@ -597,7 +618,7 @@ ggplot(p_meanlong, aes(x = time, y = p)) +
 
 ![](metaKelp_files/figure-gfm/plot%20detection-1.png)<!-- -->
 
-Plot colonization fits over space and time
+## Plot colonization fits over space and time
 
 ``` r
 if(length(dim(dyn_occ$mean$gamma))==1){
@@ -613,7 +634,7 @@ if(length(dim(dyn_occ$mean$gamma))==1){
 
 ![](metaKelp_files/figure-gfm/plot%20colonization%20predictions-1.png)<!-- -->
 
-Plot persistence fits over space and time
+## Plot persistence fits over space and time
 
 ``` r
 if(length(dim(dyn_occ$mean$phi))==1){
