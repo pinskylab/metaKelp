@@ -22,6 +22,7 @@ library(glmmTMB)
 library(ggeffects)
 library(here)
 library(data.table) # for easier and faster manipulation of large tables
+library(svglite) # for svg output
 
 survival_rate <- 0.1 # this can be changed to recreate MRM results with different survival rates per day
 
@@ -531,9 +532,11 @@ Wresponses[, psi := plogis(qlogis(mean(dyn_occ$mean$psiInt)) + dyn_occ$mean$beta
 Wresponses[, phi := plogis(qlogis(mean(dyn_occ$mean$phiInt)) + dyn_occ$mean$betaphi_hs*hsS)* 
                exp(-0.5*((0-dyn_occ$mean$Topt1)/dyn_occ$mean$width1)^2)] # persistence response. no colonization response.
 
+# svglite(here("figures", "wave_fit.svg"), width = 6, height = 4) # uncomment to save a file
 Wresponses[, plot(hs, phi, type = 'l', ylab = 'Probability', ylim=c(0,1))]
 Wresponses[, lines(hs, psi, type = 'l', col='blue')]
-legend('bottomright', col = c('black', 'red', 'blue'), lty = c(1,1), legend = c('phi (persistence)', 'gamma (colonization)', 'psi (initial occupancy)'))
+legend('topright', col = c('black', 'red', 'blue'), lty = c(1,1), legend = c('phi (persistence)', 'gamma (colonization)', 'psi (initial occupancy)'))
+# dev.off() # uncomment if saving to a file
 
 ```
 
@@ -545,7 +548,7 @@ psi_meanlong <- reshape2::melt(dyn_occ$mean$psi, varnames = c('site', 'time'), v
 ggplot(psi_meanlong, aes(x = time, y = site, fill = psi)) +
     geom_raster() + 
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size = 6))
-
+ggsave(here("figures", "occupancy_fit.svg"), width = 8, height = 6, units = "in")
 ```
 
 ## Detectability through time
